@@ -3651,9 +3651,18 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
 
 void PresetBundle::update_filament_multi_color()
 {
+    ConfigOptionStrings *filament_color = project_config.option<ConfigOptionStrings>("filament_colour");
     std::vector<std::string> exsit_multi_colors;
-    for (auto &fil_item : ams_multi_color_filment){
-        if (fil_item.empty()) break;
+    for (size_t i = 0; i < ams_multi_color_filment.size(); ++i) {
+        auto &fil_item = ams_multi_color_filment[i];
+        if (fil_item.empty()) {
+            // A tray can report no colors (e.g. an AMS behind a Filament Track Switch). Fall back
+            // to that filament's plain colour instead of truncating the list: filament_multi_colour
+            // must stay index-aligned with filament_colour / filament_colour_type, or
+            // PresetComboBox::update_ams_color() writes past its end.
+            exsit_multi_colors.push_back(i < filament_color->values.size() ? filament_color->values[i] : std::string());
+            continue;
+        }
         if (fil_item.size() == 1)
             exsit_multi_colors.push_back(fil_item[0]);
         else {
@@ -3665,8 +3674,11 @@ void PresetBundle::update_filament_multi_color()
             exsit_multi_colors.push_back(colors);
         }
     }
+    // Pad to the true filament count so the three colour vectors stay the same length even when
+    // ams_multi_color_filment has fewer entries than there are filaments.
+    for (size_t i = exsit_multi_colors.size(); i < filament_color->values.size(); ++i)
+        exsit_multi_colors.push_back(filament_color->values[i]);
     ConfigOptionStrings *filament_multi_colour = project_config.option<ConfigOptionStrings>("filament_multi_colour");
-    filament_multi_colour->resize(exsit_multi_colors.size());
     filament_multi_colour->values = exsit_multi_colors;
 }
 
