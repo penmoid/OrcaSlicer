@@ -264,9 +264,17 @@ int PresetComboBox::update_ams_color()
         colors = iter->second.opt<ConfigOptionStrings>("filament_multi_colour")->values;
     }
     DynamicPrintConfig *cfg        = &wxGetApp().preset_bundle->project_config;
-    auto color_head = static_cast<ConfigOptionStrings*>(cfg->option("filament_colour")->clone()); // single color (the first color if multi-color filament)
-    auto color_pack = static_cast<ConfigOptionStrings *>(cfg->option("filament_multi_colour")->clone()); // multi color (all colors in all kinds of filament)
-    auto color_type = static_cast<ConfigOptionStrings*>(cfg->option("filament_colour_type")->clone()); // color type
+    auto opt_head = cfg->option("filament_colour");
+    auto opt_pack = cfg->option("filament_multi_colour");
+    auto opt_type = cfg->option("filament_colour_type");
+    if (!opt_head || !opt_pack || !opt_type) return -1;
+    auto color_head = static_cast<ConfigOptionStrings*>(opt_head->clone()); // single color (the first color if multi-color filament)
+    auto color_pack = static_cast<ConfigOptionStrings *>(opt_pack->clone()); // multi color (all colors in all kinds of filament)
+    auto color_type = static_cast<ConfigOptionStrings*>(opt_type->clone()); // color type
+
+    if (m_filament_idx >= color_head->values.size()) color_head->values.resize(m_filament_idx + 1);
+    if (m_filament_idx >= color_pack->values.size()) color_pack->values.resize(m_filament_idx + 1);
+    if (m_filament_idx >= color_type->values.size()) color_type->values.resize(m_filament_idx + 1);
 
     color_head->values[m_filament_idx] = color;
     color_type->values[m_filament_idx] = ctype;
