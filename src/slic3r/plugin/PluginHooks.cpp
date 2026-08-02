@@ -3,15 +3,22 @@
 #include "PluginManager.hpp"
 #include "PythonInterpreter.hpp"
 #include "PythonPluginInterface.hpp"
+#include "pluginTypes/automation/AutomationPluginCapability.hpp"
 #include "pluginTypes/slicingPipeline/SlicingPipelinePluginCapability.hpp"
 
 #include "libslic3r/Config.hpp"
 #include "libslic3r/Exception.hpp"
+#include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r_version.h"
 
+#include "slic3r/GUI/GUI_App.hpp"
+
 #include <boost/log/trivial.hpp>
 
+#include <wx/app.h>
+
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <stdexcept>
@@ -116,18 +123,77 @@ void install_slicing_pipeline_hook()
         });
 }
 
+// PresetBundle::sync_ams_list() fires this hook per tray, synchronously on the UI thread (a
+// wxBusyCursor click handler), to let an Automation capability resolve the filament preset before
+// the stock matching heuristics run. Unlike the slicing-pipeline hook there is no cancellation to
+// honor and no critical-error path: a bad or slow resolver must never break the sync button, so
+// any exception is logged and swallowed as "no answer" rather than rethrown.
+void install_ams_filament_resolver_hook()
+{
+    PresetBundle::set_ams_filament_resolver_fn([](const PresetBundle::AmsTrayInfo& tray) -> std::string {
+        // Null wherever the plugin host runs without the GUI app (the unit tests). wxGetApp()
+        // dereferences the app unconditionally, so ask wxWidgets instead -- mirrors
+        // PluginConfig.cpp's active_preset_bundle().
+        const auto* app             = dynamic_cast<const GUI::GUI_App*>(wxApp::GetInstance());
+        const PresetBundle* bundle  = app == nullptr ? nullptr : app->preset_bundle;
+
+        AmsFilamentResolveContext ctx;
+        ctx.filament_id    = tray.filament_id;
+        ctx.filament_type  = tray.filament_type;
+        ctx.filament_color = tray.filament_color;
+        ctx.ams_id         = tray.ams_id;
+        ctx.slot_id        = tray.slot_id;
+        ctx.printer_preset = bundle == nullptr ? std::string() : bundle->printers.get_edited_preset().name;
+
+        // Enumerate loaded capabilities directly rather than execute_capabilities_from_refs<T>:
+        // Automation has no Preferences UI or per-preset manifest in this spike (every enabled
+        // capability is consulted, deterministic order, first answer wins), and that helper also
+        // calls wait_for_all_plugin_loads(10s), which the early-trigger contract forbids here. A
+        // plugin load still in flight simply has not materialized its capabilities yet, so
+        // get_plugin_capabilities() naturally returns nothing to consult and the tray falls back
+        // to stock matching -- no separate "still loading" check is needed.
+        auto capabilities = PluginManager::instance().get_plugin_capabilities(
+            /*plugin_key=*/"", PluginCapabilityType::Automation, /*only_enabled=*/true);
+        std::sort(capabilities.begin(), capabilities.end(),
+                  [](const auto& lhs, const auto& rhs) { return lhs->identity() < rhs->identity(); });
+
+        for (const auto& capability : capabilities) {
+            auto automation_cap = std::dynamic_pointer_cast<AutomationPluginCapability>(capability);
+            if (!automation_cap)
+                continue;
+
+            ExecutionResult r;
+            try {
+                PythonGILState gil;
+                if (!gil)
+                    continue; // interpreter shutting down; treat as no answer
+                r = automation_cap->resolve_ams_filament(ctx);
+            } catch (const std::exception& ex) {
+                BOOST_LOG_TRIVIAL(warning) << "Automation plugin '" << capability->name()
+                                           << "' resolve_ams_filament error: " << ex.what();
+                continue;
+            }
+            if (r.status == PluginResult::Success && !r.data.empty())
+                return r.data;
+        }
+        return std::string();
+    });
+}
+
 } // namespace
 
 void install()
 {
     install_capability_resolver();
     install_slicing_pipeline_hook();
+    install_ams_filament_resolver_hook();
 }
 
 void uninstall()
 {
     ConfigBase::set_resolve_capability_fn(nullptr);
     Print::set_slicing_pipeline_hook_fn(nullptr);
+    PresetBundle::set_ams_filament_resolver_fn(nullptr);
 }
 
 } // namespace Slic3r::plugin_hooks
