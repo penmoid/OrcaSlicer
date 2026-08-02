@@ -18,6 +18,7 @@
 #include "host/PluginHost.hpp"
 #include "PyPluginPackage.hpp"
 #include "PyPluginTrampoline.hpp"
+#include "pluginTypes/automation/AutomationPluginCapability.hpp"
 #include "pluginTypes/printerAgent/PrinterAgentPluginCapability.hpp"
 #include "pluginTypes/script/ScriptPluginCapability.hpp"
 #include "pluginTypes/slicingPipeline/SlicingPipelinePluginCapability.hpp"
@@ -419,6 +420,7 @@ void bind_python_api(pybind11::module_& m)
     BOOST_LOG_TRIVIAL(debug) << "Registering embedded Python plugin type bindings";
 
     // Make sure you register your bindings here
+    AutomationPluginCapability::RegisterBindings(m, pluginTypes);
     PrinterAgentPluginCapability::RegisterBindings(m, pluginTypes);
     ScriptPluginCapability::RegisterBindings(m, pluginTypes);
     SlicingPipelinePluginCapability::RegisterBindings(m, pluginTypes);

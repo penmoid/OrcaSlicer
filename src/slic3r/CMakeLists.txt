@@ -637,6 +637,9 @@ set(SLIC3R_GUI_SOURCES
     plugin/PluginAuditManager.hpp
     plugin/PluginResolver.cpp
     plugin/PluginResolver.hpp
+    plugin/pluginTypes/automation/AutomationPluginCapability.hpp
+    plugin/pluginTypes/automation/AutomationPluginCapability.cpp
+    plugin/pluginTypes/automation/AutomationPluginCapabilityTrampoline.hpp
     plugin/pluginTypes/printerAgent/PrinterAgentPluginCapability.hpp
     plugin/pluginTypes/printerAgent/PrinterAgentPluginCapability.cpp
     plugin/pluginTypes/printerAgent/PrinterAgentPluginCapabilityTrampoline.hpp
