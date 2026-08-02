@@ -12,6 +12,7 @@ add_executable(${_TEST_NAME}_tests
     test_plugin_lifecycle.cpp
     test_slicing_pipeline_bindings.cpp
     test_slicing_pipeline_config.cpp
+    test_ams_filament_resolver.cpp
     test_plugin_sort.cpp
     test_plugin_cloud_metadata.cpp
     test_plugin_audit.cpp
