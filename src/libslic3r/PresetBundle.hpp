@@ -304,6 +304,22 @@ public:
     void            set_num_filaments(unsigned int n, std::string new_col = "");
     void         update_num_filaments(unsigned int to_del_flament_id);
 
+    // Orca: per-tray data handed to the Automation-capability AMS-filament resolver (see
+    // AmsFilamentResolverFn below). Field values are exactly what sync_ams_list() extracted for
+    // the tray -- no additional lookups are done on the resolver's behalf.
+    struct AmsTrayInfo {
+        std::string filament_id;     // tray RFID/system id, e.g. "GFG96"
+        std::string filament_type;   // e.g. "PETG"
+        std::string filament_color;  // hex string as present on the tray config
+        std::string ams_id;
+        std::string slot_id;
+    };
+    using AmsFilamentResolverFn = std::function<std::string(const AmsTrayInfo &)>;
+    // Cross-layer injection (mirrors Print::set_slicing_pipeline_hook_fn /
+    // ConfigBase::set_resolve_capability_fn): the GUI/plugin layer registers a dispatcher;
+    // libslic3r stays free of any plugin/Python dependency.
+    static void set_ams_filament_resolver_fn(AmsFilamentResolverFn fn) { s_ams_filament_resolver_fn = std::move(fn); }
+
     void get_ams_cobox_infos(AMSComboInfo &combox_info);
     unsigned int sync_ams_list(std::vector<std::pair<DynamicPrintConfig *,std::string>> &unknowns, bool use_map, std::map<int, AMSMapInfo> &maps, bool enable_append, MergeFilamentInfo &merge_info, bool color_only = false);
     //BBS: check whether this is the only edited filament
@@ -555,6 +571,8 @@ private:
     bool validation_mode = false;
     std::string vendor_to_validate = "";
     int m_errors = 0;
+
+    static AmsFilamentResolverFn s_ams_filament_resolver_fn;
 
     // Helper function: save preset to bundle directory with common logic
     bool save_preset_to_bundle_dir(Preset& preset, PresetCollection* collection,
