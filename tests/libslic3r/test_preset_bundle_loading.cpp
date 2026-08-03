@@ -634,3 +634,38 @@ TEST_CASE("Resetting the AMS resolver restores stock matching", "[Preset][AmsRes
     CHECK(bundle.filament_presets[0] == "Generic PLA");
 }
 
+// Direct unit coverage for the validation helper itself (factored out of sync_ams_list()'s
+// per-tray loop so the GUI's auto-apply path can reuse the exact same validation without going
+// through sync_ams_list()'s full per-tray matching). No tray config or sync_ams_list() call
+// needed here -- just the AmsTrayInfo the resolver would be handed.
+TEST_CASE("try_resolve_ams_filament validates the resolver's answer", "[Preset][AmsResolver]")
+{
+    ResolverGuard guard;
+    PresetBundle  bundle;
+
+    add_inmemory_preset(bundle.filaments, "My Custom PLA").is_compatible = true;
+    add_inmemory_preset(bundle.filaments, "Incompatible PLA").is_compatible = false;
+
+    const PresetBundle::AmsTrayInfo tray{"TEST-ID-1", "PLA", "#112233", "0", "0"};
+
+    SECTION("no resolver installed returns empty") {
+        CHECK(bundle.try_resolve_ams_filament(tray).empty());
+    }
+    SECTION("a valid, compatible answer is returned") {
+        PresetBundle::set_ams_filament_resolver_fn([](const PresetBundle::AmsTrayInfo &) { return std::string("My Custom PLA"); });
+        CHECK(bundle.try_resolve_ams_filament(tray) == "My Custom PLA");
+    }
+    SECTION("an empty (declined) answer is returned as empty") {
+        PresetBundle::set_ams_filament_resolver_fn([](const PresetBundle::AmsTrayInfo &) { return std::string(); });
+        CHECK(bundle.try_resolve_ams_filament(tray).empty());
+    }
+    SECTION("a name no preset has is returned as empty") {
+        PresetBundle::set_ams_filament_resolver_fn([](const PresetBundle::AmsTrayInfo &) { return std::string("Does Not Exist"); });
+        CHECK(bundle.try_resolve_ams_filament(tray).empty());
+    }
+    SECTION("a name that resolves but is not compatible is returned as empty") {
+        PresetBundle::set_ams_filament_resolver_fn([](const PresetBundle::AmsTrayInfo &) { return std::string("Incompatible PLA"); });
+        CHECK(bundle.try_resolve_ams_filament(tray).empty());
+    }
+}
+
