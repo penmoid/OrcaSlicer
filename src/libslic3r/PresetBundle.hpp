@@ -319,6 +319,17 @@ public:
     // ConfigBase::set_resolve_capability_fn): the GUI/plugin layer registers a dispatcher;
     // libslic3r stays free of any plugin/Python dependency.
     static void set_ams_filament_resolver_fn(AmsFilamentResolverFn fn) { s_ams_filament_resolver_fn = std::move(fn); }
+    // Whether a resolver is currently installed. Lets a caller (e.g. the GUI's per-tray
+    // auto-apply diffing) skip all resolver-only work with one cheap check when no Automation
+    // capability is enabled, rather than doing the work and finding out empty-handed.
+    static bool has_ams_filament_resolver() { return static_cast<bool>(s_ams_filament_resolver_fn); }
+
+    // Consults the installed resolver (if any) for one tray and validates its answer: non-empty,
+    // AND resolves via filaments.find_preset(), AND is_compatible. Returns the validated preset
+    // name, or empty if there is no resolver, it declined, or its answer doesn't hold up. Shared
+    // by sync_ams_list()'s per-tray loop and the GUI's per-tray auto-apply path so both always
+    // apply the exact same validation.
+    std::string try_resolve_ams_filament(const AmsTrayInfo &tray) const;
 
     void get_ams_cobox_infos(AMSComboInfo &combox_info);
     unsigned int sync_ams_list(std::vector<std::pair<DynamicPrintConfig *,std::string>> &unknowns, bool use_map, std::map<int, AMSMapInfo> &maps, bool enable_append, MergeFilamentInfo &merge_info, bool color_only = false);

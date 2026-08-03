@@ -3237,6 +3237,19 @@ void PresetBundle::get_ams_cobox_infos(AMSComboInfo& combox_info)
     }
 }
 
+std::string PresetBundle::try_resolve_ams_filament(const AmsTrayInfo &tray) const
+{
+    if (!s_ams_filament_resolver_fn)
+        return {};
+    const std::string resolved_name = s_ams_filament_resolver_fn(tray);
+    if (resolved_name.empty())
+        return {};
+    const Preset *resolved = filaments.find_preset(resolved_name);
+    if (resolved == nullptr || !resolved->is_compatible)
+        return {};
+    return resolved->name;
+}
+
 unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfig *,std::string>> &unknowns, bool use_map, std::map<int, AMSMapInfo> &maps, bool enable_append, MergeFilamentInfo &merge_info, bool color_only)
 {
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "use_map:" << use_map << " enable_append:" << enable_append;
@@ -3311,17 +3324,14 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
         // restriction the find_if below enforces -- that is the point of the feature. A resolver
         // that declines (empty return) or a name that fails find_preset/is_compatible falls
         // straight through to the existing matching logic below, unchanged.
-        if (!color_only && s_ams_filament_resolver_fn) {
-            const std::string resolved_name = s_ams_filament_resolver_fn({filament_id, filament_type, filament_color, ams_id, slot_id});
+        if (!color_only) {
+            const std::string resolved_name = try_resolve_ams_filament({filament_id, filament_type, filament_color, ams_id, slot_id});
             if (!resolved_name.empty()) {
-                const Preset *resolved = filaments.find_preset(resolved_name);
-                if (resolved != nullptr && resolved->is_compatible) {
-                    ams_filament_presets.push_back(resolved->name);
-                    ams_filament_colors.push_back(filament_color);
-                    ams_filament_color_types.push_back(filament_color_type);
-                    ams_multi_color_filment.push_back(filament_multi_color);
-                    continue;
-                }
+                ams_filament_presets.push_back(resolved_name);
+                ams_filament_colors.push_back(filament_color);
+                ams_filament_color_types.push_back(filament_color_type);
+                ams_multi_color_filment.push_back(filament_multi_color);
+                continue;
             }
         }
         auto iter = std::find_if(filaments.begin(), filaments.end(), [this, &filament_id, &has_type, filament_type](auto &f) {
