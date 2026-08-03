@@ -4316,7 +4316,7 @@ void Sidebar::get_small_btn_sync_pos_size(wxPoint &pt, wxSize &size) {
     pt   = ams_btn->GetScreenPosition();
 }
 
-void Sidebar::load_ams_list(MachineObject* obj)
+void Sidebar::load_ams_list(MachineObject* obj, bool auto_resolve)
 {
     std::map<int, DynamicPrintConfig> filament_ams_list;
 
@@ -4348,6 +4348,121 @@ void Sidebar::load_ams_list(MachineObject* obj)
     }
 
     p->combo_printer->update();
+
+    if (auto_resolve && obj)
+        auto_resolve_changed_ams_filaments(obj);
+}
+
+// Orca: Automation-capability auto-apply. Reached only from load_ams_list(obj, /*auto_resolve=*/true),
+// i.e. only from the MQTT push-arrival path (message_arrive_fn / lan_message_arrive_fn in
+// GUI_App.cpp), which already runs this on the UI thread via CallAfter. The manual sync_ams_list()
+// flow passes auto_resolve=false for its own load_ams_list() call, since it does its own full
+// resolve-and-apply (through PresetBundle::sync_ams_list()) a few lines later regardless.
+//
+// Ordinal convention matches the persisted "ams_filament_ids" app-config list this same device
+// already uses for its own filament_changed bookkeeping (see list2 in sync_ams_list() below):
+// position i is the i-th entry of filament_ams_list in ascending key order, independent of
+// whether that tray is empty. Reusing it means the manual and automatic flows can never disagree
+// about what "changed" means for a given tray.
+void Sidebar::auto_resolve_changed_ams_filaments(MachineObject* obj)
+{
+    // Zero-cost when no Automation capability is enabled: the only work done before bailing is
+    // one static pointer check.
+    if (!PresetBundle::has_ams_filament_resolver())
+        return;
+
+    // Never touch project state mid manual-sync, while printing/blocking, or against a
+    // printer/profile mismatch. is_same_printer_for_connected_and_selected() already encodes the
+    // selected-machine / printer-initialized / printer-preset-present / not-blocking checks;
+    // popup_warning=false because this runs unattended off a background push, never from a click.
+    if (m_sync_dlg && m_sync_dlg->IsShown())
+        return;
+    if (!wxGetApp().plater()->is_same_printer_for_connected_and_selected(false))
+        return;
+    // The user told manual sync not to touch presets at all (color-only mode); honor that here too.
+    if (wxGetApp().app_config->get("sync_ams_filament_mode") == "1")
+        return;
+
+    PresetBundle* preset_bundle = wxGetApp().preset_bundle;
+    auto&         list          = preset_bundle->filament_ams_list;
+    if (list.empty())
+        return;
+
+    // Same persisted per-device baseline the manual flow's list2 already reads/writes
+    // (see sync_ams_list() below), padded to the current tray count so a first-ever connect
+    // (no persisted value yet) naturally reads every tray as "changed".
+    std::vector<std::string> previous_ids;
+    std::string ams_filament_ids = wxGetApp().app_config->get("ams_filament_ids", p->ams_list_device);
+    if (!ams_filament_ids.empty())
+        boost::algorithm::split(previous_ids, ams_filament_ids, boost::algorithm::is_any_of(","));
+    previous_ids.resize(list.size());
+
+    std::vector<std::string>         current_ids;
+    std::vector<DynamicPrintConfig*> ordinal_configs;
+    current_ids.reserve(list.size());
+    ordinal_configs.reserve(list.size());
+    for (auto& entry : list) {
+        current_ids.push_back(entry.second.opt_string("filament_id", 0u));
+        ordinal_configs.push_back(&entry.second);
+    }
+
+    std::vector<int> changed_ordinals;
+    for (size_t i = 0; i < current_ids.size(); ++i)
+        if (current_ids[i] != previous_ids[i])
+            changed_ordinals.push_back((int) i);
+    if (changed_ordinals.empty())
+        return;
+
+    auto&                 filament_presets = preset_bundle->filament_presets;
+    DynamicPrintConfig&   project_config   = preset_bundle->project_config;
+    ConfigOptionStrings*  color_opt        = project_config.option<ConfigOptionStrings>("filament_colour");
+    ConfigOptionStrings*  color_type_opt   = project_config.option<ConfigOptionStrings>("filament_colour_type");
+
+    int applied_count = 0;
+    for (int idx : changed_ordinals) {
+        // Never auto-append new project filament slots.
+        if (idx >= (int) filament_presets.size())
+            continue;
+        const std::string& filament_id = current_ids[idx];
+        if (filament_id.empty())
+            continue; // spool removed, not a resolvable change
+
+        DynamicPrintConfig& ams               = *ordinal_configs[idx];
+        const std::string   filament_type     = ams.opt_string("filament_type", 0u);
+        const std::string   filament_color    = ams.opt_string("filament_colour", 0u);
+        const std::string   filament_color_ty = ams.opt_string("filament_colour_type", 0u);
+        const std::string   ams_id            = ams.opt_string("ams_id", 0u);
+        const std::string   slot_id           = ams.opt_string("slot_id", 0u);
+
+        const std::string resolved_name = preset_bundle->try_resolve_ams_filament(
+            {filament_id, filament_type, filament_color, ams_id, slot_id});
+        if (resolved_name.empty())
+            continue; // no resolver answer for this tray -- leave the slot exactly as it was
+
+        filament_presets[idx] = resolved_name;
+        if (color_opt && idx < (int) color_opt->values.size())
+            color_opt->values[idx] = filament_color;
+        if (color_type_opt && idx < (int) color_type_opt->values.size())
+            color_type_opt->values[idx] = filament_color_ty;
+        if (idx < (int) preset_bundle->ams_multi_color_filment.size())
+            preset_bundle->ams_multi_color_filment[idx] = ams.opt<ConfigOptionStrings>("filament_multi_colour")->values;
+        if (idx < (int) p->combos_filament.size())
+            p->combos_filament[idx]->update();
+
+        ++applied_count;
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": auto-applied resolver preset '" << resolved_name
+                                 << "' to filament slot " << idx << " for filament_id '" << filament_id
+                                 << "' (device " << obj->get_dev_id() << ")";
+    }
+
+    // Record every changed ordinal's new filament_id, resolved or not, so an unresolved (or
+    // out-of-range) change isn't re-diffed and re-attempted on every subsequent push.
+    for (int idx : changed_ordinals)
+        previous_ids[idx] = current_ids[idx];
+    wxGetApp().app_config->set("ams_filament_ids", p->ams_list_device, boost::algorithm::join(previous_ids, ","));
+
+    if (applied_count > 0)
+        update_filaments_area_height();
 }
 
 void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
@@ -4357,7 +4472,7 @@ void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
     auto obj = wxGetApp().getDeviceManager()->get_selected_machine();
     if (!obj)
         return;
-    GUI::wxGetApp().sidebar().load_ams_list(obj);
+    GUI::wxGetApp().sidebar().load_ams_list(obj, /*auto_resolve=*/false);
 
     auto & list = wxGetApp().preset_bundle->filament_ams_list;
     if (list.empty()) {

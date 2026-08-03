@@ -142,6 +142,8 @@ class Sidebar : public wxPanel
     SyncAmsInfoDialog*                      m_sync_dlg{nullptr};
 
     void update_sync_ams_btn_enable(wxUpdateUIEvent &e);
+    // Orca: Automation-capability auto-apply for load_ams_list(obj, /*auto_resolve=*/true).
+    void auto_resolve_changed_ams_filaments(MachineObject* obj);
 
 public:
     enum DockingState
@@ -192,7 +194,12 @@ public:
     bool is_new_project_in_gcode3mf();
     // BBS
     void on_bed_type_change(BedType bed_type);
-    void load_ams_list(MachineObject* obj);
+    // auto_resolve: consult the installed Automation-capability resolver for any tray whose
+    // filament_id changed since the last time we looked, applying a valid answer to that project
+    // filament slot only (never touching unchanged slots, never falling back to stock matching).
+    // The manual sync_ams_list() flow passes false, since its own full resolve-and-apply a few
+    // lines later would otherwise be preceded by a redundant partial one.
+    void load_ams_list(MachineObject* obj, bool auto_resolve = true);
     std::map<int, DynamicPrintConfig> build_filament_ams_list(MachineObject* obj);
     void sync_ams_list(bool is_from_big_sync_btn = false);
     bool sync_extruder_list();
